@@ -123,7 +123,7 @@ body{
       <li>ചോദ്യങ്ങൾ Verbal, Non-Verbal, Analytical Reasoning എന്നിവയിൽ നിന്നുള്ള മോഡലുകൾ അടിസ്ഥാനമാക്കി തയ്യാറാക്കിയിരിക്കുന്നു.</li>
       <li>നിങ്ങളുടെ പേര് ടൈപ്പ് ചെയ്‌ത ശേഷം ചോദ്യങ്ങൾക്ക് ഉത്തരം നൽകുക. Submit ചെയ്താൽ ശരി/തെറ്റ് ഉത്തരങ്ങൾ കളർ കോഡ് ചെയ്ത് കാണിക്കും.</li>
       <li>ഓരോ ലിങ്കും "Download PDF" ബട്ടൺ വഴി വാട്ടർമാർക്കോടു കൂടിയ PDF ആയി ഡൗൺലോഡ് ചെയ്യാം. PDF പാസ്‌വേഡ്: <b>2026LSS</b>. അവസാന പേജിൽ ആൻസർ കീ ലഭ്യമാണ്.</li>
-      <li>ഓരോ ലിങ്കിലെയും ചോദ്യങ്ങൾ ക്രമരഹിതമായി സൃഷ്ടിക്കപ്പെടുന്നവയാണ്. ചോദ്യങ്ങൾ ആവർത്തിക്കുന്നില്ല.</li>
+      <li>ഓരോ ലിങ്കിലെയും ചോദ്യങ്ങൾ ക്രമരഹിതമായി സൃഷ്ടിക്കപ്പെടുന്നു. 12 ലിങ്കുകളിലായി ഒരു ചോദ്യവും ആവർത്തിക്കില്ല; സമാന ശൈലിയിലുള്ള പുതിയ ചോദ്യങ്ങൾ മാത്രം വരും.</li>
     </ul>
   </div>
 
@@ -252,9 +252,60 @@ function fromBank(rng,item){
   const shuffled=shuffle(rng,arr);
   return {q:item.q, opts:shuffled.map(o=>o.v), ans:shuffled.findIndex(o=>o.c)};
 }
+function qFingerprint(item){
+  const q = stripHtml(item && item.q);
+  const opts = (item && item.opts ? item.opts : []).map(o=>{
+    if(o && typeof o==='object'){
+      if(o.img) return 'IMG:'+String(o.img).slice(-48);
+      return JSON.stringify(o);
+    }
+    return String(o);
+  }).join('|');
+  return q+'::'+opts;
+}
+const USED_QFP = new Set();
+const USED_STEM = new Set();
+const USED_BANK_IDX = {verbal:new Set(), series:new Set(), eng:new Set(), gk:new Set()};
+
 function pickBank(rng,bank,used){
-  let idx,tries=0; do{ idx=randInt(rng,0,bank.length-1); tries++; }while(used.has(idx)&&tries<80);
-  used.add(idx); return fromBank(rng,bank[idx]);
+  const unused=[];
+  for(let i=0;i<bank.length;i++) if(!used.has(i)) unused.push(i);
+  if(!unused.length) return null;
+  const idx = unused[randInt(rng,0,unused.length-1)];
+  used.add(idx);
+  return fromBank(rng,bank[idx]);
+}
+function acceptItem(item){
+  if(!item || !item.q) return false;
+  const stem = stripHtml(item.q);
+  if(!stem) return false;
+  if(USED_STEM.has(stem)) return false;
+  const fp = qFingerprint(item);
+  if(USED_QFP.has(fp)) return false;
+  USED_STEM.add(stem);
+  USED_QFP.add(fp);
+  return true;
+}
+function takeBank(rng,bank,used,limit){
+  const out=[];
+  let guard=0;
+  while(out.length<limit && guard<bank.length+8){
+    guard++;
+    const item=pickBank(rng,bank,used);
+    if(!item) break;
+    if(acceptItem(item)) out.push(item);
+  }
+  return out;
+}
+function takeGen(rng,genFn,limit,maxTries){
+  const out=[];
+  const tries = maxTries || limit*20;
+  for(let t=0;t<tries && out.length<limit;t++){
+    let item=null;
+    try{ item=genFn(rng); }catch(e){ item=null; }
+    if(item && acceptItem(item)) out.push(item);
+  }
+  return out;
 }
 function stripHtml(s){ if(typeof s!=='string') return ''; return s.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim(); }
 
@@ -299,7 +350,36 @@ const VERBAL_BANK = [  // EVS style
   {q:"ഭൂമിയുടെ ഉപഗ്രഹം?",correct:"ചന്ദ്രൻ",wrong:["സൂര്യൻ","ചൊവ്വ","ശനി"]},
   {q:"കേരളത്തിലെ പ്രധാന തീർത്ഥാടന കേന്ദ്രം?",correct:"ശബരിമല",wrong:["തിരുപതി","വാരണാസി","ഹരിദ്വാർ"]},
   {q:"മഴയുടെ പ്രധാന കാരണം?",correct:"ജലചംക്രമണം",wrong:["കാറ്റ്","സൂര്യൻ","മണ്ണ്"]},
-  {q:"താഴെ പറയുന്നവയിൽ പച്ചക്കറി അല്ലാത്തത്?",correct:"മാങ്ങ",wrong:["തക്കാളി","വഴുതന","പയർ"]}
+  {q:"താഴെ പറയുന്നവയിൽ പച്ചക്കറി അല്ലാത്തത്?",correct:"മാങ്ങ",wrong:["തക്കാളി","വഴുതന","പയർ"]},
+  {q:"ചെടികൾക്ക് ഭക്ഷണം ഉണ്ടാക്കാൻ വേണ്ടത്?",correct:"സൂര്യപ്രകാശം",wrong:["ഇരുട്ട്","മഞ്ഞ്","ഉപ്പ്"]},
+  {q:"മണ്ണൊലിപ്പ് തടയാൻ സഹായിക്കുന്നത്?",correct:"വൃക്ഷങ്ങൾ",wrong:["പ്ലാസ്റ്റിക്","കല്ല് മാത്രം","തീ"]},
+  {q:"കുടിവെള്ളം ശേഖരിക്കുന്ന നല്ല മാർഗം?",correct:"മഴവെള്ള സംഭരണം",wrong:["കടൽവെള്ളം കുടിക്കുക","മണ്ണെണ്ണ കലർത്തുക","മാലിന്യം ഇടുക"]},
+  {q:"പാലിൽ കൂടുതലായി ലഭിക്കുന്നത്?",correct:"കാൽസ്യം",wrong:["ഇരുമ്പ് മാത്രം","അയഡിൻ മാത്രം","വിറ്റാമിൻ D മാത്രം"]},
+  {q:"മാലിന്യം കുറയ്ക്കാൻ ഏറ്റവും നല്ലത്?",correct:"കുറയ്ക്കുക, വീണ്ടും ഉപയോഗിക്കുക, റീസൈക്കിൾ",wrong:["കത്തിക്കുക മാത്രം","നദിയിൽ ഇടുക","കുഴിച്ചിടുക മാത്രം"]},
+  {q:"തേനീച്ചകൾ ചെയ്യുന്ന പ്രധാന ജോലി?",correct:"പരാഗണം",wrong:["മണ്ണ് ഇളക്കൽ","വേട്ട","മഴ ഉണ്ടാക്കൽ"]},
+  {q:"രാത്രി കാണാൻ സഹായിക്കുന്ന ആകാശഗോളം?",correct:"ചന്ദ്രൻ",wrong:["സൂര്യൻ","അഗ്നിപർവതം","മേഘം മാത്രം"]},
+  {q:"ആരോഗ്യകരമായ ഭക്ഷണത്തിൽ ഉണ്ടാകേണ്ടത്?",correct:"പഴങ്ങളും പച്ചക്കറികളും",wrong:["മിഠായി മാത്രം","കൊഴുപ്പ് മാത്രം","ഉപ്പ് മാത്രം"]},
+  {q:"വാഹനാപകടം ഒഴിവാക്കാൻ റോഡിൽ ചെയ്യേണ്ടത്?",correct:"സീറ്റ് ബെൽറ്റ് / ഹെൽമെറ്റ് ധരിക്കുക",wrong:["വേഗം കൂട്ടുക","സിഗ്നൽ ലംഘിക്കുക","ഫോൺ നോക്കി ഓടിക്കുക"]},
+  {q:"വനം സംരക്ഷിക്കേണ്ടത് എന്തുകൊണ്ട്?",correct:"ജീവജാലങ്ങൾക്കും മഴയ്ക്കും ആവശ്യം",wrong:["വെറുതെ മാത്രം","റോഡിന് മാത്രം","കളിക്ക് മാത്രം"]},
+  {q:"ഇലകളുടെ പച്ചനിറത്തിന് കാരണം?",correct:"ക്ലോറോഫിൽ",wrong:["രക്തം","മഷി","മണൽ"]},
+  {q:"മഴക്കാലത്ത് ശ്രദ്ധിക്കേണ്ടത്?",correct:"ശുദ്ധജലവും ശുചിത്വവും",wrong:["തുറന്ന ഭക്ഷണം മാത്രം","ചെളി കുടിക്കുക","കൊതുകിനെ വളർത്തുക"]},
+  {q:"കൊതുക് പെരുകുന്നത് എവിടെ?",correct:"കെട്ടിക്കിടക്കുന്ന വെള്ളം",wrong:["ഒഴുകുന്ന നദി മാത്രം","ഉണങ്ങിയ മണൽ","തീയുടെ അരികിൽ"]},
+  {q:"പാൽപ്പല്ലുകൾക്ക് ശേഷം വരുന്നത്?",correct:"സ്ഥിരദന്തങ്ങൾ",wrong:["ചിറക്","കൊമ്പ്","നഖം"]},
+  {q:"ഭൂമി സൂര്യനെ ചുറ്റുന്നത്?",correct:"ഒരു വർഷം കൊണ്ട്",wrong:["ഒരു ദിവസം കൊണ്ട്","ഒരു മണിക്കൂർ കൊണ്ട്","ഒരു മാസം മാത്രം"]},
+  {q:"ദിനരാത്രങ്ങൾ ഉണ്ടാകാൻ കാരണം?",correct:"ഭൂമിയുടെ സ്വയംഭ്രമണം",wrong:["ചന്ദ്രന്റെ വെളിച്ചം മാത്രം","കാറ്റ്","മഴ"]},
+  {q:"കേരളത്തിലെ പ്രധാന ഭക്ഷ്യധാന്യം?",correct:"അരി",wrong:["ഗോതമ്പ്","ചോളം","ബാർലി"]},
+  {q:"പ്ലാസ്റ്റിക് മാലിന്യം നദിയിൽ ഇട്ടാൽ?",correct:"ജലമലിനീകരണം",wrong:["ശുദ്ധജലം","കൂടുതൽ മത്സ്യം","നല്ല മണ്ണ്"]},
+  {q:"വൈദ്യുതി ലാഭിക്കാൻ ചെയ്യേണ്ടത്?",correct:"ആവശ്യമില്ലാത്തപ്പോൾ സ്വിച്ച് ഓഫ്",wrong:["എല്ലാ ലൈറ്റും എപ്പോഴും ഓൺ","ഫാൻ ഇരട്ടി","വെള്ളം പാഴാക്കുക"]},
+  {q:"ആശുപത്രിയിൽ പ്രധാനമായും ലഭിക്കുന്ന സേവനം?",correct:"ചികിത്സ",wrong:["സിനിമ","ക്രിക്കറ്റ്","വ്യാപാരം മാത്രം"]},
+  {q:"തപാൽ സേവനം നൽകുന്ന സ്ഥാപനം?",correct:"പോസ്റ്റ് ഓഫീസ്",wrong:["ബാങ്ക് മാത്രം","സ്കൂൾ","തിയേറ്റർ"]},
+  {q:"തീപിടിത്തമുണ്ടായാൽ ആദ്യം വിളിക്കേണ്ടത്?",correct:"ഫയർഫോഴ്‌സ് / 101",wrong:["സിനിമ ഹാൾ","കളിസ്ഥലം","മാർക്കറ്റ്"]},
+  {q:"പ്രഥമശുശ്രൂഷയുടെ ലക്ഷ്യം?",correct:"ജീവൻ രക്ഷിക്കുക / സഹായം",wrong:["ശകാരിക്കുക","ഓടി മാറുക","ചിത്രമെടുക്കുക മാത്രം"]},
+  {q:"മണ്ണിന്റെ ഫലഭൂയിഷ്ടത കൂട്ടുന്നത്?",correct:"ജൈവവളം",wrong:["പ്ലാസ്റ്റിക്","ഗ്ലാസ്","ലോഹക്കഷണം"]},
+  {q:"കടൽജലം കുടിക്കാൻ പറ്റാത്തത് എന്തുകൊണ്ട്?",correct:"ഉപ്പ് കൂടുതൽ",wrong:["മധുരം കൂടുതൽ","തണുപ്പ് കൂടുതൽ","നിറം മാത്രം"]},
+  {q:"പുസ്തകശാലയിൽ ചെയ്യേണ്ടത്?",correct:"നിശബ്ദമായി വായിക്കുക",wrong:["ഉറക്കെ വിളിക്കുക","പുസ്തകം കീറുക","ഓടുക"]},
+  {q:"റെയിൽവേ സ്റ്റേഷനിൽ ടിക്കറ്റ് ലഭിക്കുന്നത്?",correct:"കൗണ്ടറിൽ / അപ്ലിക്കേഷനിൽ",wrong:["പാലത്തിനടിയിൽ","കടലിൽ","കാട്ടിൽ"]},
+  {q:"സൂര്യപ്രകാശം ഇല്ലെങ്കിൽ ചെടികൾ?",correct:"നന്നായി വളരില്ല",wrong:["കൂടുതൽ വളരും","പാലു തരും","പറക്കും"]},
+  {q:"ശുചിത്വം പാലിക്കുന്നതിന്റെ ഗുണം?",correct:"രോഗങ്ങൾ കുറയും",wrong:["രോഗം കൂടും","വെള്ളം മോശമാകും","വായു മോശമാകും"]}
 ];
 
 const SERIES_BANK = [  // simple number patterns for Class 4
@@ -312,7 +392,18 @@ const SERIES_BANK = [  // simple number patterns for Class 4
   {q:"4, 8, 12, 16, ?",correct:"20",wrong:["18","24","22"]},
   {q:"1, 2, 4, 8, ?",correct:"16",wrong:["10","12","14"]},
   {q:"9, 18, 27, 36, ?",correct:"45",wrong:["40","54","42"]},
-  {q:"50, 45, 40, 35, ?",correct:"30",wrong:["25","32","28"]}
+  {q:"50, 45, 40, 35, ?",correct:"30",wrong:["25","32","28"]},
+  {q:"11, 22, 33, 44, ?",correct:"55",wrong:["54","56","66"]},
+  {q:"2, 4, 8, 16, ?",correct:"32",wrong:["24","20","30"]},
+  {q:"7, 14, 21, 28, ?",correct:"35",wrong:["32","34","42"]},
+  {q:"1, 8, 27, 64, ?",correct:"125",wrong:["100","81","121"]},
+  {q:"21, 18, 15, 12, ?",correct:"9",wrong:["8","10","6"]},
+  {q:"5, 25, 125, ?",correct:"625",wrong:["250","500","225"]},
+  {q:"10, 13, 16, 19, ?",correct:"22",wrong:["21","23","20"]},
+  {q:"36, 30, 24, 18, ?",correct:"12",wrong:["10","14","16"]},
+  {q:"8, 16, 24, 32, ?",correct:"40",wrong:["36","42","48"]},
+  {q:"1, 4, 9, 16, ?",correct:"25",wrong:["20","36","18"]},
+  {q:"6, 12, 18, 24, ?",correct:"30",wrong:["28","32","36"]}
 ];
 
 const ENGLISH_BANK = [  // keep some simple for mix, but mainly Maths below
@@ -325,7 +416,21 @@ const ENGLISH_BANK = [  // keep some simple for mix, but mainly Maths below
   {q:"A baby dog is called a _____",correct:"puppy",wrong:["kitten","cub","calf"]},
   {q:"We drink _____",correct:"water",wrong:["fire","air","stone"]},
   {q:"Opposite of 'big'?",correct:"small",wrong:["tall","long","wide"]},
-  {q:"2 + 2 = ?",correct:"4",wrong:["3","5","6"]}
+  {q:"2 + 2 = ?",correct:"4",wrong:["3","5","6"]},
+  {q:"A triangle has how many sides?",correct:"3",wrong:["4","5","6"]},
+  {q:"How many months in a year?",correct:"12",wrong:["10","11","13"]},
+  {q:"Half of 20 is _____",correct:"10",wrong:["5","15","8"]},
+  {q:"Which is even?",correct:"8",wrong:["7","9","11"]},
+  {q:"Which is odd?",correct:"15",wrong:["12","18","20"]},
+  {q:"10 tens make _____",correct:"100",wrong:["10","20","50"]},
+  {q:"The smallest 2-digit number is _____",correct:"10",wrong:["11","9","99"]},
+  {q:"The largest 2-digit number is _____",correct:"99",wrong:["90","100","89"]},
+  {q:"5 + 7 = ?",correct:"12",wrong:["11","13","10"]},
+  {q:"9 − 4 = ?",correct:"5",wrong:["4","6","13"]},
+  {q:"3 × 6 = ?",correct:"18",wrong:["12","21","16"]},
+  {q:"16 ÷ 4 = ?",correct:"4",wrong:["2","8","6"]},
+  {q:"A cube has how many faces?",correct:"6",wrong:["4","8","12"]},
+  {q:"How many minutes in an hour?",correct:"60",wrong:["30","100","24"]}
 ];
 
 const GK_BANK = [  // Maths style for Paper-2
@@ -348,7 +453,26 @@ const GK_BANK = [  // Maths style for Paper-2
   {q:"3 × 15 = ?",correct:"45",wrong:["30","60","35"]},
   {q:"80 – 25 = ?",correct:"55",wrong:["65","45","50"]},
   {q:"ഒരു ആഴ്ച = എത്ര ദിവസം?",correct:"7",wrong:["5","6","8"]},
-  {q:"6 × 7 = ?",correct:"42",wrong:["36","48","40"]}
+  {q:"6 × 7 = ?",correct:"42",wrong:["36","48","40"]},
+  {q:"ഒരു സമചതുരത്തിന്റെ വശം 8 സെ.മീ ആയാൽ ചുറ്റളവ്?",correct:"32 സെ.മീ",wrong:["16 സെ.മീ","24 സെ.മീ","64 സെ.മീ"]},
+  {q:"12 + 19 = ?",correct:"31",wrong:["30","32","29"]},
+  {q:"45 − 18 = ?",correct:"27",wrong:["23","28","37"]},
+  {q:"9 × 6 = ?",correct:"54",wrong:["56","48","63"]},
+  {q:"72 ÷ 8 = ?",correct:"9",wrong:["8","7","6"]},
+  {q:"ഒരു ലിറ്ററിൽ എത്ര മില്ലിലിറ്റർ?",correct:"1000",wrong:["100","10","500"]},
+  {q:"ഇരട്ട സംഖ്യ ഏത്?",correct:"24",wrong:["21","27","35"]},
+  {q:"ഒറ്റ സംഖ്യ ഏത്?",correct:"17",wrong:["16","20","28"]},
+  {q:"ഏറ്റവും ചെറിയ 3 അക്ക സംഖ്യ?",correct:"100",wrong:["99","101","111"]},
+  {q:"ഏറ്റവും വലിയ 3 അക്ക സംഖ്യ?",correct:"999",wrong:["900","990","1000"]},
+  {q:"¼ + ¼ = ?",correct:"½",wrong:["1","¼","2"]},
+  {q:"ഒരു മീറ്ററിൽ എത്ര മില്ലിമീറ്റർ?",correct:"1000",wrong:["100","10","500"]},
+  {q:"11 × 11 = ?",correct:"121",wrong:["111","131","110"]},
+  {q:"200 − 75 = ?",correct:"125",wrong:["115","135","150"]},
+  {q:"ഒരു ദിവസം എത്ര മിനിറ്റ്? (24×60)",correct:"1440",wrong:["240","600","1200"]},
+  {q:"5 ഡസൻ = എത്ര?",correct:"60",wrong:["50","12","55"]},
+  {q:"ചതുരത്തിന്റെ നീളം 10 സെ.മീ വീതി 4 സെ.മീ. ചുറ്റളവ്?",correct:"28 സെ.മീ",wrong:["14 സെ.മീ","40 സെ.മീ","24 സെ.മീ"]},
+  {q:"0.5 + 0.5 = ?",correct:"1",wrong:["0.25","2","0"]},
+  {q:"8 × 12 = ?",correct:"96",wrong:["84","108","80"]}
 ];
 
 /* ============================================================
@@ -418,10 +542,10 @@ function genAnalogyNumber(rng){
 }
 
 function genCodingLetter(rng){
-  const word=choice(rng,['CLOUD','RIVER','MOON','STAR','PLANT','EARTH']);
-  const shift=randInt(rng,1,4);
+  const word=choice(rng,['CLOUD','RIVER','MOON','STAR','PLANT','EARTH','APPLE','MANGO','TIGER','INDIA','SCHOOL','WATER']);
+  const shift=randInt(rng,1,5);
   const coded=word.split('').map(ch=>String.fromCharCode(((ch.charCodeAt(0)-65+shift)%26)+65)).join('');
-  const target=choice(rng,['OCEAN','FOREST','STONE','WIND','FLAME']);
+  const target=choice(rng,['OCEAN','FOREST','STONE','WIND','FLAME','HOUSE','PAPER','GREEN','BREAD','TRAIN','MUSIC','LIGHT']);
   const ansCoded=target.split('').map(ch=>String.fromCharCode(((ch.charCodeAt(0)-65+shift)%26)+65)).join('');
   const distract=()=>{
     const s=randInt(rng,1,5); return target.split('').map(ch=>String.fromCharCode(((ch.charCodeAt(0)-65+s)%26)+65)).join('');
@@ -488,11 +612,15 @@ function genOddOneWord(rng){
     {odd:"കൊച്ചി", same:["ചെന്നൈ","മുംബൈ","കൊൽക്കത്ത"]},
     {odd:"രാധാകൃഷ്ണൻ", same:["നെഹ്‌റു","ഇന്ദിര","മോദി"]},
     {odd:"സിംഹം", same:["പശു","ആട്","മാൻ"]},
-    {odd:"വിമാനം", same:["കാർ","ബസ്","ട്രെയിൻ"]}
+    {odd:"വിമാനം", same:["കാർ","ബസ്","ട്രെയിൻ"]},
+    {odd:"തിമിംഗലം", same:["സ്രാവ്","മത്തി","അയല"]},
+    {odd:"ത്രികോണം", same:["ചതുരം","സമചതുരം","ചതുർഭുജം"]},
+    {odd:"പെൻസിൽ", same:["ആപ്പിൾ","മാങ്ങ","വാഴപ്പഴം"]},
+    {odd:"ഹിമാലയം", same:["പെരിയാർ","ഗംഗ","യമുന"]}
   ];
   const g=choice(rng,groups);
   const opts=shuffle(rng,[g.odd,...g.same]);
-  return {q:`ചുവടെയുള്ളവയിൽ ഓഡ് വൺ കണ്ടെത്തുക:`,opts,ans:opts.indexOf(g.odd)};
+  return {q:`ഓഡ് വൺ കണ്ടെത്തുക: ${opts.join(', ')}`,opts,ans:opts.indexOf(g.odd)};
 }
 
 function genAlwaysHas(rng){
@@ -501,7 +629,10 @@ function genAlwaysHas(rng){
     {q:"ഒരു സ്കൂളിന് എല്ലായ്പ്പോഴും വേണ്ടത്?",correct:"അധ്യാപകർ",wrong:["കെട്ടിടം","ലൈബ്രറി","പ്രിൻസിപ്പൽ"]},
     {q:"ഒരു പുസ്തകത്തിന് എല്ലായ്പ്പോഴും ഉണ്ടാകുന്നത്?",correct:"പേജുകൾ",wrong:["ചിത്രങ്ങൾ","കഥ","അധ്യായങ്ങൾ"]},
     {q:"ഒരു മലയ്ക്ക് എല്ലായ്പ്പോഴും ഉണ്ടാകുന്നത്?",correct:"ഉയരം",wrong:["വെള്ളം","മൃഗങ്ങൾ","സസ്യങ്ങൾ"]},
-    {q:"ഒരു ഫാക്ടറിക്ക് എല്ലായ്പ്പോഴും ഉണ്ടാകുന്നത്?",correct:"തൊഴിലാളികൾ",wrong:["മെഷീൻ","വൈദ്യുതി","സുരക്ഷ"]}
+    {q:"ഒരു ഫാക്ടറിക്ക് എല്ലായ്പ്പോഴും ഉണ്ടാകുന്നത്?",correct:"തൊഴിലാളികൾ",wrong:["മെഷീൻ","വൈദ്യുതി","സുരക്ഷ"]},
+    {q:"ഒരു നദിക്ക് എല്ലായ്പ്പോഴും ഉണ്ടാകുന്നത്?",correct:"ഒഴുക്ക്",wrong:["പാലം","മത്സ്യബന്ധനം","ബോട്ട്"]},
+    {q:"ഒരു വൃത്തത്തിന് എല്ലായ്പ്പോഴും ഉണ്ടാകുന്നത്?",correct:"കേന്ദ്രം",wrong:["കോൺ","വശം","വികർണം"]},
+    {q:"ഒരു ത്രികോണത്തിന് എല്ലായ്പ്പോഴും ഉണ്ടാകുന്നത്?",correct:"മൂന്ന് വശം",wrong:["നാല് കോൺ","വൃത്തം","സമചതുരം"]}
   ];
   return fromBank(rng,choice(rng,items));
 }
@@ -512,7 +643,10 @@ function genWordAnalogy(rng){
     {a:"കലണ്ടർ",b:"തീയതി",c:"നിഘണ്ടു",d:"വാക്കുകൾ"},
     {a:"പുക",b:"മലിനീകരണം",c:"യുദ്ധം",d:"നാശം"},
     {a:"അടുക്കള",b:"കിടപ്പുമുറി",c:"സസ്യശാസ്ത്രം",d:"ജന്തുശാസ്ത്രം"},
-    {a:"മഗ്നീഷ്യം",b:"അലുമിനിയം",c:"ബ്രാസ്",d:"കോപ്പർ"}
+    {a:"മഗ്നീഷ്യം",b:"അലുമിനിയം",c:"ബ്രാസ്",d:"കോപ്പർ"},
+    {a:"തേനീച്ച",b:"തേൻ",c:"പശു",d:"പാൽ"},
+    {a:"വിത്ത്",b:"ചെടി",c:"മുട്ട",d:"കുഞ്ഞ്"},
+    {a:"ഡോക്ടർ",b:"ആശുപത്രി",c:"അധ്യാപകൻ",d:"വിദ്യാലയം"}
   ];
   const p=choice(rng,pairs);
   const wrongs=shuffle(rng,["നടൻ","മാനേജർ","വിജയം","ശാസ്ത്രം","ഇരുമ്പ്"]).slice(0,3);
@@ -575,20 +709,21 @@ function genSymbolOp(rng){
 }
 
 function genDictionaryPos(rng){
-  const letters=['R','O','S','E'];
-  // All permutations of ROSE sorted
+  const words=[['R','O','S','E'],['A','C','E'],['L','I','P'],['B','A','T'],['C','A','T']];
+  const letters=choice(rng,words);
   const perms=[];
   function permute(arr,l,r){
     if(l===r){perms.push(arr.join('')); return;}
     for(let i=l;i<=r;i++){[arr[l],arr[i]]=[arr[i],arr[l]]; permute(arr,l+1,r); [arr[l],arr[i]]=[arr[i],arr[l]];}
   }
-  permute(letters.slice(),0,3);
+  permute(letters.slice(),0,letters.length-1);
   const sorted=[...new Set(perms)].sort();
-  const target='SERO';
+  const target=choice(rng,sorted);
   const pos=sorted.indexOf(target)+1;
-  const distract=()=>pos+choice(rng,[-2,-1,1,2]);
+  const distract=()=>Math.max(1,pos+choice(rng,[-3,-2,-1,1,2,3]));
   const {opts,ans}=uniq4(rng,pos,distract);
-  return {q:`'ROSE' അക്ഷരങ്ങൾ ഉപയോഗിച്ച് ഉണ്ടാക്കാവുന്ന വാക്കുകൾ നിഘണ്ടു ക്രമത്തിൽ ക്രമീകരിച്ചാൽ "SERO" യുടെ സ്ഥാനം?`,opts,ans};
+  const src=letters.join('');
+  return {q:`'${src}' അക്ഷരങ്ങൾ ഉപയോഗിച്ച് ഉണ്ടാക്കാവുന്ന വാക്കുകൾ നിഘണ്ടു ക്രമത്തിൽ ക്രമീകരിച്ചാൽ "${target}" യുടെ സ്ഥാനം?`,opts,ans};
 }
 
 /* Figure based generators using canvas */
@@ -626,7 +761,8 @@ function genOddFigure(rng){
     const v = (i===ansIdx)? correctVariant : sameVariant;
     optsImgs.push({img:drawOddFigure(type,v)});
   }
-  return {q:"ചുവടെയുള്ള ചിത്രങ്ങളിൽ മറ്റുള്ളവയിൽ നിന്ന് വ്യത്യസ്തമായത് ഏത്?",opts:optsImgs,ans:ansIdx};
+  const labels=['ത്രികോണചിത്രം','അമ്പുചിത്രം','ബിന്ദുചിത്രം','വൃത്തചിത്രം'];
+  return {q:`${labels[type]} കൂട്ടത്തിൽ മറ്റുള്ളവയിൽ നിന്ന് വ്യത്യസ്തമായത് ഏത്? (സെറ്റ് ${randInt(rng,11,99)})`,opts:optsImgs,ans:ansIdx};
 }
 
 function drawVennSimple(kind){
@@ -716,7 +852,7 @@ function genMissingNumberFig(rng){
     ctx.beginPath(); ctx.moveTo(60,50); ctx.lineTo(70,50); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(120,50); ctx.lineTo(130,50); ctx.stroke();
   });
-  return {q:`ചിത്രത്തിലെ ചോദ്യചിഹ്നത്തിന് പകരം വരുന്ന സംഖ്യ? (രണ്ടാമത്തേത് = ആദ്യത്തേതിന്റെ ഗുണനം)`,opts,ans,qImg};
+  return {q:`ചിത്രത്തിൽ ${a} നും ${b} നും ശേഷം ചോദ്യചിഹ്നത്തിന് പകരം വരുന്ന സംഖ്യ? (ഗുണനബന്ധം)`,opts,ans,qImg};
 }
 
 function genEquationSolve(rng){
@@ -735,30 +871,118 @@ function genEquationSolve(rng){
 /* ============================================================
    BUILD A FULL LINK (40 Q)
    ============================================================ */
-function buildLink(seed){
-  const rng=mulberry32(seed*753198642+20242);
-  let qs=[];
-  const usedVerbal=new Set();
-  const usedSeries=new Set();
-  const usedEng=new Set();
-  const usedGk=new Set();
-
-  // Part A style – Malayalam / Verbal (approx 15)
-  for(let i=0;i<12;i++) qs.push(pickBank(rng,VERBAL_BANK,usedVerbal));
-  for(let i=0;i<3;i++) qs.push(pickBank(rng,SERIES_BANK,usedSeries));
-
-  // Part B style – English (approx 8)
-  for(let i=0;i<8;i++) qs.push(pickBank(rng,ENGLISH_BANK,usedEng));
-
-  // Part C style – General Knowledge (approx 12)
-  for(let i=0;i<12;i++) qs.push(pickBank(rng,GK_BANK,usedGk));
-
-  // Fill remaining with simple series / verbal
-  while(qs.length<40){
-    if(rng()<0.5) qs.push(pickBank(rng,SERIES_BANK,usedSeries));
-    else qs.push(pickBank(rng,VERBAL_BANK,usedVerbal));
+function genArithmeticSeries(rng){
+  const start=randInt(rng,1,40);
+  const step=randInt(rng,2,12);
+  const seq=[];
+  for(let i=0;i<5;i++) seq.push(start+i*step);
+  const correct=start+5*step;
+  const distract=()=>correct+choice(rng,[-step*2,-step,step,step*2,3]);
+  const {opts,ans}=uniq4(rng,correct,distract);
+  return {q:`ശ്രേണി പൂരിപ്പിക്കുക: ${seq.join(', ')}, ?`,opts,ans};
+}
+function genSimpleAdd(rng){
+  const op=choice(rng,['+','−','×','÷']);
+  let correct,q;
+  if(op==='+'){ const a=randInt(rng,12,80), b=randInt(rng,8,60); correct=a+b; q=`${a} + ${b} = ?`; }
+  else if(op==='−'){ const a=randInt(rng,20,90), b=randInt(rng,5,a-1); correct=a-b; q=`${a} − ${b} = ?`; }
+  else if(op==='×'){ const x=randInt(rng,4,12), y=randInt(rng,4,12); correct=x*y; q=`${x} × ${y} = ?`; }
+  else { const y=randInt(rng,2,12), x=y*randInt(rng,2,12); correct=x/y; q=`${x} ÷ ${y} = ?`; }
+  const distract=()=>correct+choice(rng,[-10,-6,-3,-1,1,3,6,10]);
+  const {opts,ans}=uniq4(rng,correct,distract);
+  return {q,opts,ans};
+}
+function genPlaceValue(rng){
+  const n=randInt(rng,125,986);
+  const kind=randInt(rng,0,2);
+  let correct,q;
+  if(kind===0){ correct=n%10; q=`${n} എന്ന സംഖ്യയിലെ ഒന്നിന്റെ സ്ഥാനത്തെ അക്കം?`; }
+  else if(kind===1){ correct=Math.floor(n/10)%10; q=`${n} എന്ന സംഖ്യയിലെ പത്തിന്റെ സ്ഥാനത്തെ അക്കം?`; }
+  else { correct=Math.floor(n/100)%10; q=`${n} എന്ന സംഖ്യയിലെ നൂറിന്റെ സ്ഥാനത്തെ അക്കം?`; }
+  const distract=()=>randInt(rng,0,9);
+  const {opts,ans}=uniq4(rng,correct,distract);
+  return {q,opts,ans};
+}
+function genPerimeter(rng){
+  if(rng()<0.5){
+    const s=randInt(rng,4,20);
+    const correct=4*s;
+    const distract=()=>correct+choice(rng,[-4,-2,s,2*s]);
+    const {opts,ans}=uniq4(rng,correct,distract);
+    return {q:`${s} സെ.മീ വശമുള്ള സമചതുരത്തിന്റെ ചുറ്റളവ്?`,opts,ans};
   }
-  return qs.slice(0,40);
+  const l=randInt(rng,8,20), b=randInt(rng,3,l-2);
+  const correct=2*(l+b);
+  const distract=()=>correct+choice(rng,[-4,-2,2,4,l]);
+  const {opts,ans}=uniq4(rng,correct,distract);
+  return {q:`നീളം ${l} സെ.മീ, വീതി ${b} സെ.മീ ഉള്ള ചതുരത്തിന്റെ ചുറ്റളവ്?`,opts,ans};
+}
+function genUnitConvert(rng){
+  const kind=randInt(rng,0,3);
+  let q,correct;
+  if(kind===0){ const m=randInt(rng,2,15); correct=m*100; q=`${m} മീറ്റർ = എത്ര സെന്റീമീറ്റർ?`; }
+  else if(kind===1){ const kg=randInt(rng,2,9); correct=kg*1000; q:`${kg} കിലോഗ്രാം = എത്ര ഗ്രാം?`; }
+  else if(kind===2){ const l=randInt(rng,2,8); correct=l*1000; q:`${l} ലിറ്റർ = എത്ര മില്ലിലിറ്റർ?`; }
+  else { const h=randInt(rng,2,8); correct=h*60; q:`${h} മണിക്കൂർ = എത്ര മിനിറ്റ്?`; }
+  const distract=()=>correct+choice(rng,[-correct/2,-10,10,correct/2,100].map(x=>Math.round(x)));
+  const {opts,ans}=uniq4(rng,correct,distract);
+  return {q,opts,ans};
+}
+
+function buildLink(seed){
+  const rng=mulberry32(seed*753198642 + 20242 + USED_STEM.size*17);
+  let qs=[];
+
+  const evs = takeBank(rng, VERBAL_BANK, USED_BANK_IDX.verbal, 8);
+  const series = takeBank(rng, SERIES_BANK, USED_BANK_IDX.series, 3);
+  const english = takeBank(rng, ENGLISH_BANK, USED_BANK_IDX.eng, 4);
+  const maths = takeBank(rng, GK_BANK, USED_BANK_IDX.gk, 8);
+
+  const procFns = [
+    genNumberSeries, genAnalogyNumber, genAgeSum, genWorkDays,
+    genClockAngle, genFractionSum, genLCMRemainder, genUnitDigit,
+    genSymbolOp, genCountShapes, genMissingNumberFig, genEquationSolve,
+    genOddFigure, genCubePaint, genOddOneWord, genAlwaysHas,
+    genWordAnalogy, genDirection, genCodingLetter, genLetterSeries,
+    genDictionaryPos, genVennRelation, genArithmeticSeries, genSimpleAdd,
+    genPlaceValue, genPerimeter, genUnitConvert
+  ];
+  const procedural=[];
+  const fnOrder = shuffle(rng, procFns);
+  for(const fn of fnOrder){
+    if(procedural.length>=17) break;
+    procedural.push(...takeGen(rng, fn, 1, 28));
+  }
+
+  qs = qs.concat(evs, series, english, maths, procedural);
+
+  const leftoverBanks = [
+    [VERBAL_BANK, USED_BANK_IDX.verbal],
+    [GK_BANK, USED_BANK_IDX.gk],
+    [ENGLISH_BANK, USED_BANK_IDX.eng],
+    [SERIES_BANK, USED_BANK_IDX.series]
+  ];
+  let guard=0;
+  while(qs.length<Q_PER_LINK && guard<500){
+    guard++;
+    if(rng()<0.45){
+      const pair=choice(rng, leftoverBanks);
+      const extra=takeBank(rng, pair[0], pair[1], 1);
+      if(extra.length){ qs.push(extra[0]); continue; }
+    }
+    const extra=takeGen(rng, choice(rng, procFns), 1, 22);
+    if(extra.length) qs.push(extra[0]);
+  }
+  while(qs.length<Q_PER_LINK){
+    const extra=takeGen(rng, genSimpleAdd, 1, 40);
+    if(extra.length) qs.push(extra[0]);
+    else {
+      const extra2=takeGen(rng, genArithmeticSeries, 1, 40);
+      if(extra2.length) qs.push(extra2[0]);
+      else break;
+    }
+  }
+  return qs.slice(0, Q_PER_LINK);
 }
 
 /* ============================================================
@@ -771,9 +995,9 @@ let submittedState = {};
 let resultState = {};
 
 function sectionTag(qi){
-  if(qi<30) return {cls:'tag-verbal', label:'Verbal / ഭാഷാ യുക്തി'};
-  if(qi<60) return {cls:'tag-nonverbal', label:'Non-Verbal / അലിഖിത യുക്തി'};
-  return {cls:'tag-analytical', label:'Analytical / വിശകലന യുക്തി'};
+  if(qi<16) return {cls:'tag-verbal', label:'പരിസര പഠനം / EVS'};
+  if(qi<28) return {cls:'tag-nonverbal', label:'ഗണിതം / Mathematics'};
+  return {cls:'tag-analytical', label:'യുക്തി / Reasoning'};
 }
 
 function buildNav(){
